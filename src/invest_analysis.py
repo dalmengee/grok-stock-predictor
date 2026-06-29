@@ -38,6 +38,8 @@ class InvestmentReport:
     rsi: float
     flow_5d: dict[str, float]
     flow_20d: dict[str, float]
+    market_regime: str = ""
+    regime_label: str = ""
     reasons: list[str] = field(default_factory=list)
     cautions: list[str] = field(default_factory=list)
 
@@ -151,6 +153,10 @@ def analyze_for_investment(
     portfolio_value: float = 10_000_000,
 ) -> InvestmentReport:
     """종목 투자 분석 리포트를 생성합니다."""
+    from src.backtest.benchmark import fetch_index_close
+    from src.backtest.regime import detect_regime
+    from src.backtest.signals import score_at_date
+
     info = get_company_info(code)
     df_ext = fetch_daily_quote(code, period=period, extended=True)
     df = df_ext[_OHLCV_COLS].copy()
@@ -206,7 +212,33 @@ def analyze_for_investment(
         total, risk, float(row["rsi"]), predicted_return
     )
 
-    stop_loss = min(current - 2 * atr, float(row["sma_20"]) * 0.97, current * 0.95)
+    from datetime import datetime, timedelta
+    _end = datetime.now().strftime("%Y-%m-%d")
+    _start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
+    index_close = fetch_index_close("001", _start, _end)
+    as_of = df_ext.index[-1]
+    regime = detect_regime(index_close, as_of)
+    mode_score = score_at_date(df_ext, use_flow=True, mode=regime.strategy_mode) or 0
+
+    position_pct = round(position_pct * regime.exposure_cap, 1)
+    reasons.insert(0, f"시장 국면: {regime.label}")
+
+    if regime.strategy_mode == "cash":
+        action, position_pct = "관망", 0.0
+        cautions.append("포트폴리오 DD 위기 — 신규 매수 중단")
+    elif mode_score < regime.entry_score:
+        if action in ("매수", "분할 매수"):
+            action = "관망"
+            position_pct = 0.0
+            cautions.append(f"국면별 점수 {mode_score:.0f} < 진입기준 {regime.entry_score:.0f}")
+    elif regime.regime.value == "bear":
+        cautions.append("하락장 — 소액·단기 대응만 권장")
+
+    stop_loss = min(
+        current - 2 * atr,
+        current * (1 - regime.stop_loss_pct),
+        float(row["sma_20"]) * 0.97,
+    )
     target_price = max(predicted_price, float(row.get("bb_upper", current * 1.05)))
 
     if action in ("매수", "분할 매수"):
@@ -251,6 +283,8 @@ def analyze_for_investment(
             "individual": _flow_sum(df_ext, "individual_net", 20),
             "program": _flow_sum(df_ext, "program_net", 20),
         },
+        market_regime=regime.regime.value,
+        regime_label=regime.label,
         reasons=reasons[:8],
         cautions=cautions[:6],
     )

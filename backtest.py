@@ -21,8 +21,17 @@ def _print_metrics(label: str, m) -> None:
     print(f"    승률:       {m.win_rate_pct:.1f}%")
     print(f"    손익비:     {m.profit_factor:.2f}")
     print(f"    거래횟수:   {m.total_trades}회")
-    print(f"    평균보유:   {m.avg_hold_days:.1f}일")
     print(f"    최종자산:   ₩{m.final_value:,.0f}")
+
+
+def _verdict(m) -> str:
+    if m.alpha_pct > 0 and m.sharpe_ratio > 0.3:
+        return "✅ KOSPI 대비 초과수익"
+    if m.total_return_pct > m.benchmark_return_pct:
+        return "✅ 벤치마크 수익률 상회"
+    if m.total_return_pct > 0:
+        return "⚠️  절대수익은 있으나 벤치마크 열세"
+    return "❌ 손실 구간"
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -30,83 +39,92 @@ def cmd_run(args: argparse.Namespace) -> int:
         start_date=args.start,
         end_date=args.end,
         initial_cash=args.cash,
-        max_positions=args.positions,
-        entry_score=args.entry,
-        exit_score=args.exit,
-        stop_loss_pct=args.stop / 100,
-        take_profit_pct=args.profit / 100,
+        adaptive=not args.simple,
         rebalance_days=args.rebalance,
+        crisis_dd_threshold=args.crisis_dd / 100,
     )
-    print(f"\n🔬 백테스트 실행 ({args.universe}, {args.start} ~ {args.end})\n")
+    mode = "적응형 (국면전환+리스크관리)" if cfg.adaptive else "단순 로테이션"
+    print(f"\n🔬 백테스트 — {mode}")
+    print(f"   {args.universe}, {args.start} ~ {args.end}\n")
+
     result = run_backtest(universe=args.universe, config=cfg)
     m = result.metrics
 
     print("=" * 60)
-    print("  전략: 점수 기반 유니버스 로테이션")
-    print(f"  진입 {args.entry}점 / 청산 {args.exit}점 / 최대 {args.positions}종목")
-    print("=" * 60)
     _print_metrics("성과", m)
 
-    sells = [t for t in result.trades if t["side"] == "sell"]
-    if sells:
-        print("\n  최근 매도 5건:")
-        for t in sells[-5:]:
-            print(
-                f"    {t['date']} {t['code']} {t['reason']} "
-                f"₩{t['pnl']:+,.0f} ({t['hold_days']}일)"
-            )
-    print("\n" + "=" * 60)
-    if m.alpha_pct > 0 and m.sharpe_ratio > 0.5:
-        print("  ✅ KOSPI 대비 초과수익 — 전략 유효성 있음 (과거 기준)")
-    elif m.total_return_pct > 0:
-        print("  ⚠️  수익은 있으나 벤치마크 대비 열세 — 개선 필요")
-    else:
-        print("  ❌ 손실 구간 — 파라미터 조정 또는 전략 변경 필요")
+    if not result.regime_log.empty and cfg.adaptive:
+        counts = result.regime_log["regime"].value_counts()
+        print("\n  [시장 국면 분포]")
+        for regime, cnt in counts.items():
+            pct = cnt / len(result.regime_log) * 100
+            print(f"    {regime}: {pct:.0f}%")
+        if not result.exposure_log.empty:
+            print(f"    평균 주식비중: {result.exposure_log.mean()*100:.1f}%")
+
+    print(f"\n  판정: {_verdict(m)}")
+    print("=" * 60 + "\n")
+    return 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    """단순 vs 적응형 전략 비교."""
+    base = dict(
+        start_date=args.start, end_date=args.end,
+        initial_cash=args.cash, rebalance_days=args.rebalance,
+    )
+    print(f"\n🔬 전략 비교 ({args.start} ~ {args.end})\n")
     print("=" * 60)
-    print("\n⚠️  과거 성과가 미래 수익을 보장하지 않습니다.\n")
+
+    for label, adaptive in [("단순 로테이션", False), ("적응형 전략", True)]:
+        cfg = BacktestConfig(**base, adaptive=adaptive)
+        r = run_backtest(args.universe, cfg)
+        print(f"\n  ▶ {label}")
+        print(f"    수익률 {r.metrics.total_return_pct:+.1f}% | 알파 {r.metrics.alpha_pct:+.1f}%p | MDD {r.metrics.max_drawdown_pct:.1f}% | 샤프 {r.metrics.sharpe_ratio:.2f}")
+
+    print("\n" + "=" * 60 + "\n")
     return 0
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    print(f"\n🔬 워크포워드 검증 ({args.start} ~ {args.end}, train {args.train_ratio:.0%})\n")
+    print(f"\n🔬 워크포워드 검증 (적응형, {args.start} ~ {args.end})\n")
     wf = run_walk_forward(
         universe=args.universe,
         start_date=args.start,
         end_date=args.end,
         train_ratio=args.train_ratio,
+        base_config=BacktestConfig(adaptive=True),
     )
     print("=" * 60)
     print(f"  분할일: {wf.split_date}")
-    _print_metrics("In-Sample (학습 구간)", wf.is_metrics)
-    _print_metrics("Out-of-Sample (검증 구간)", wf.oos_metrics)
+    _print_metrics("In-Sample", wf.is_metrics)
+    _print_metrics("Out-of-Sample", wf.oos_metrics)
     print(f"\n  판정: {wf.summary}")
     print("=" * 60 + "\n")
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="전략 백테스트 및 워크포워드 검증")
+    parser = argparse.ArgumentParser(description="전략 백테스트")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_run = sub.add_parser("run", help="백테스트 실행")
-    p_run.add_argument("--universe", default="kospi_large", choices=["kospi_large", "kosdaq", "all"])
-    p_run.add_argument("--start", default="2024-01-01")
-    p_run.add_argument("--end", default="2025-06-30")
-    p_run.add_argument("--cash", type=float, default=10_000_000)
-    p_run.add_argument("--positions", type=int, default=5)
-    p_run.add_argument("--entry", type=float, default=60, help="진입 점수")
-    p_run.add_argument("--exit", type=float, default=45, help="청산 점수")
-    p_run.add_argument("--stop", type=float, default=8, help="손절 %")
-    p_run.add_argument("--profit", type=float, default=15, help="익절 %")
-    p_run.add_argument("--rebalance", type=int, default=5, help="리밸런싱 주기(일)")
-    p_run.set_defaults(func=cmd_run)
-
-    p_val = sub.add_parser("validate", help="워크포워드 검증")
-    p_val.add_argument("--universe", default="kospi_large", choices=["kospi_large", "kosdaq", "all"])
-    p_val.add_argument("--start", default="2023-01-01")
-    p_val.add_argument("--end", default="2025-06-30")
-    p_val.add_argument("--train-ratio", type=float, default=0.7)
-    p_val.set_defaults(func=cmd_validate)
+    for name, help_text in [
+        ("run", "백테스트 실행"),
+        ("compare", "단순 vs 적응형 비교"),
+        ("validate", "워크포워드 검증"),
+    ]:
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--universe", default="kospi_large", choices=["kospi_large", "kosdaq", "all"])
+        p.add_argument("--start", default="2024-01-01")
+        p.add_argument("--end", default="2025-06-30")
+        p.add_argument("--cash", type=float, default=10_000_000)
+        p.add_argument("--rebalance", type=int, default=5)
+        if name == "run":
+            p.add_argument("--simple", action="store_true", help="단순 전략 (구버전)")
+            p.add_argument("--crisis-dd", type=float, default=12, help="위기 DD 차단 %")
+        if name == "validate":
+            p.add_argument("--train-ratio", type=float, default=0.7)
+        p.set_defaults(func={"run": cmd_run, "compare": cmd_compare, "validate": cmd_validate}[name])
 
     args = parser.parse_args()
     try:

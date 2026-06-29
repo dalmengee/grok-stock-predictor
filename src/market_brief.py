@@ -19,6 +19,9 @@ class MarketBrief:
     date: str
     db_latest: str
     market_mood: str
+    market_regime: str
+    regime_label: str
+    exposure_cap: float
     buy_ideas: list[InvestmentReport]
     watch_list: list[InvestmentReport]
     portfolio_summary: dict
@@ -41,8 +44,21 @@ def generate_market_brief(
     top_ideas: int = 5,
 ) -> MarketBrief:
     """오늘의 투자 브리핑을 생성합니다."""
+    from src.backtest.benchmark import fetch_index_close
+    from src.backtest.regime import detect_regime
+
     screening = screen_korean_stocks(universe=universe, top_n=top_ideas)
     db_latest = get_latest_quote_date() or ""
+
+    from datetime import datetime, timedelta
+    _end = datetime.now().strftime("%Y-%m-%d")
+    _start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
+    index_close = fetch_index_close("001", _start, _end)
+    if not index_close.empty:
+        regime = detect_regime(index_close, index_close.index[-1])
+    else:
+        from src.backtest.regime import REGIME_PROFILES, MarketRegime
+        regime = REGIME_PROFILES[MarketRegime.NEUTRAL]
 
     buy_codes = [p.ticker for p in screening.all_picks if p.recommendation in ("강력 매수", "매수")]
     watch_codes = [p.ticker for p in screening.all_picks if p.recommendation == "관망"][:3]
@@ -81,8 +97,9 @@ def generate_market_brief(
         portfolio_actions.append(item)
 
     notes = [
+        f"시장 국면: {regime.label} (투자 한도 {regime.exposure_cap*100:.0f}%)",
         f"{screening.universe_label} {screening.analyzed_count}개 분석, 매수 후보 {len(buy_codes)}개",
-        "수급(외국인/기관) + 기술적 지표 + ML 예측을 종합한 판단입니다.",
+        "수급 + 기술적 지표 + ML + 시장국면을 종합한 판단입니다.",
     ]
     if mood == "신중":
         notes.append("시장 전반 점수가 낮습니다. 분할 매수와 리스크 관리를 권장합니다.")
@@ -91,6 +108,9 @@ def generate_market_brief(
         date=datetime.now().strftime("%Y-%m-%d"),
         db_latest=db_latest,
         market_mood=mood,
+        market_regime=regime.regime.value,
+        regime_label=regime.label,
+        exposure_cap=regime.exposure_cap,
         buy_ideas=buy_ideas,
         watch_list=watch_list,
         portfolio_summary={

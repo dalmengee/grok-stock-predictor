@@ -53,7 +53,11 @@ python backtest.py run --universe kospi_large --start 2024-01-01 --end 2025-06-3
 python backtest.py validate --universe kospi_large
 ```
 
-전략: 점수(기술+수급) 기반 유니버스 로테이션 · 손절/익절 · KOSPI 벤치마크 대비
+**적응형 전략** (기본): 시장 국면(상승/횡보/하락/위기)별 전략 전환 · 변동성 기반 포지션 사이징 · DD 차단 · trailing stop
+
+```bash
+python backtest.py compare   # 단순 vs 적응형 비교
+```
 
 ### 투자 의사결정
 
