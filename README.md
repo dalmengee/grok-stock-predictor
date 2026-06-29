@@ -60,7 +60,6 @@ streamlit run app.py                     # 통합 웹 UI (위 페이지 포함)
 ```bash
 python kr_pick.py
 python kr_pick.py --universe all --top 10
-streamlit run kr_app.py
 ```
 
 점수 기준 (100점): ML 예측 30 + 추세 25 + 모멘텀 20 + 거래량 15 + 단기 강도 10
@@ -69,7 +68,10 @@ streamlit run kr_app.py
 
 ```bash
 streamlit run app.py
+# → http://localhost:8629
 ```
+
+고정 포트: **8629** (`.streamlit/config.toml`)
 
 사이드바에서 페이지 이동:
 - **홈** — 개요
