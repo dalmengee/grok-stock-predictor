@@ -151,6 +151,7 @@ def fetch_multiple_daily_quotes(
     period: str = "1y",
     start: str | None = None,
     end: str | None = None,
+    extended: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """여러 종목 일봉 데이터를 한 번에 반환합니다."""
     normalized = []
@@ -171,7 +172,7 @@ def fetch_multiple_daily_quotes(
     try:
         rows = conn.execute(
             f"""
-            SELECT code, dt, open, high, low, close, trade_qty
+            SELECT code, {_quote_query_columns(extended)}
             FROM daily_quote
             WHERE code IN ({placeholders}) AND dt >= ? AND dt <= ?
             ORDER BY code, dt
@@ -184,14 +185,19 @@ def fetch_multiple_daily_quotes(
     if not rows:
         return {}
 
-    df = pd.DataFrame(rows, columns=["code", "dt", "open", "high", "low", "close", "volume"])
+    if extended:
+        columns = ["code", "dt", *_OHLCV_COLS, *_FLOW_COLS]
+    else:
+        columns = ["code", "dt", *_OHLCV_COLS]
+    df = pd.DataFrame(rows, columns=columns)
     df["dt"] = pd.to_datetime(df["dt"])
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     result: dict[str, pd.DataFrame] = {}
+    value_cols = _OHLCV_COLS + (_FLOW_COLS if extended else [])
     for code, group in df.groupby("code"):
-        cleaned = group.set_index("dt")[["open", "high", "low", "close", "volume"]].dropna()
+        cleaned = group.set_index("dt")[value_cols].dropna(subset=_OHLCV_COLS)
         if not cleaned.empty:
             result[str(code)] = cleaned
     return result

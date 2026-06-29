@@ -11,6 +11,7 @@
 - 미국·한국 주식 지원 (`AAPL`, `005930.KS` 등)
 - **오늘의 한국 주식 스크리너** — 코스피/코스닥 종목을 분석해 매수 후보 순위 제공
 - **투자 의사결정 도구** — 종목 분석, 수급/리스크, 손절·목표가, 포트폴리오, 일일 브리핑
+- **백테스트·검증** — 과거 성과 시뮬레이션, KOSPI 대비 알파, 워크포워드 OOS 검증
 - CLI 및 Streamlit 웹 UI
 
 ## 설치
@@ -45,6 +46,15 @@ python predict.py 005930 --days 10
 python predict.py TSLA --model gradient_boosting --chart chart.png
 ```
 
+### 백테스트 (전략 검증)
+
+```bash
+python backtest.py run --universe kospi_large --start 2024-01-01 --end 2025-06-30
+python backtest.py validate --universe kospi_large
+```
+
+전략: 점수(기술+수급) 기반 유니버스 로테이션 · 손절/익절 · KOSPI 벤치마크 대비
+
 ### 투자 의사결정
 
 ```bash
@@ -78,6 +88,7 @@ streamlit run app.py
 - **종목 예측** — ML 주가 예측
 - **주식 스크리너** — 매수 후보 순위
 - **투자 의사결정** — 브리핑 · 분석 · 포트폴리오
+- **백테스트** — 과거 성과 검증 · 워크포워드
 
 ## 프로젝트 구조
 
@@ -97,6 +108,7 @@ streamlit run app.py
     ├── invest_analysis.py  # 투자 분석 (수급/리스크/손절)
     ├── portfolio.py        # 포트폴리오 관리
     ├── market_brief.py     # 일일 투자 브리핑
+    ├── backtest/           # 백테스트 엔진·검증
     ├── screener.py     # 매수 스코어링
     ├── korean_universe.py  # 한국 종목 리스트
     └── visualizer.py   # 차트 시각화

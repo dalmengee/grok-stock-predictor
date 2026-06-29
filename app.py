@@ -16,6 +16,7 @@ pages = [
     st.Page("ui/predict_page.py", title="종목 예측", icon="📈"),
     st.Page("ui/screener_page.py", title="주식 스크리너", icon="🇰🇷"),
     st.Page("ui/invest_page.py", title="투자 의사결정", icon="💼"),
+    st.Page("ui/backtest_page.py", title="백테스트", icon="🔬"),
 ]
 
 pg = st.navigation(pages)
