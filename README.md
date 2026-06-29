@@ -48,16 +48,24 @@ python predict.py TSLA --model gradient_boosting --chart chart.png
 
 ### 백테스트 (전략 검증)
 
-```bash
-python backtest.py run --universe kospi_large --start 2024-01-01 --end 2025-06-30
-python backtest.py validate --universe kospi_large
-```
-
-**적응형 전략** (기본): 시장 국면(상승/횡보/하락/위기)별 전략 전환 · 변동성 기반 포지션 사이징 · DD 차단 · trailing stop
+기본 기간: **2016-01-04 ~ 2026-06-29** (약 10.5년, 최소 10년 검증)
 
 ```bash
-python backtest.py compare   # 단순 vs 적응형 비교
+python backtest.py run                              # 이중 전략 10년 백테스트
+python backtest.py validate --universe kospi_large  # 워크포워드 OOS 검증
+python backtest.py compare                          # 단순 vs 이중 전략 비교
 ```
+
+**이중 전략** (기본): 상승장/하락장에 다른 전략 + **MDD 15% 이내** 유지
+
+| 국면 | 전략 | 주식 비중 | 현금 | 최대 종목 | 종목당 비중 |
+|------|------|-----------|------|-----------|-------------|
+| 상승장 | 모멘텀 추종 | 60% | 40% | 4 | 15% |
+| 횡보장 | 선별 매수 | 30% | 70% | 2 | 15% |
+| 하락장 | 과매도 반등 | 15% | 85% | 1 | 15% |
+| 위기 | 전량 현금 | 0% | 100% | 0 | — |
+
+DD 스케일링: -5% → 비중 ×0.6, -8% → ×0.4, -12% 이상 → 전량 현금
 
 ### 투자 의사결정
 

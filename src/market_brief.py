@@ -45,7 +45,7 @@ def generate_market_brief(
 ) -> MarketBrief:
     """오늘의 투자 브리핑을 생성합니다."""
     from src.backtest.benchmark import fetch_index_close
-    from src.backtest.regime import detect_regime
+    from src.backtest.regime import get_allocation_plan
 
     screening = screen_korean_stocks(universe=universe, top_n=top_ideas)
     db_latest = get_latest_quote_date() or ""
@@ -55,10 +55,10 @@ def generate_market_brief(
     _start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
     index_close = fetch_index_close("001", _start, _end)
     if not index_close.empty:
-        regime = detect_regime(index_close, index_close.index[-1])
+        plan = get_allocation_plan(index_close, index_close.index[-1])
     else:
-        from src.backtest.regime import REGIME_PROFILES, MarketRegime
-        regime = REGIME_PROFILES[MarketRegime.NEUTRAL]
+        from src.backtest.position_plan import NEUTRAL_PLAN
+        plan = NEUTRAL_PLAN
 
     buy_codes = [p.ticker for p in screening.all_picks if p.recommendation in ("강력 매수", "매수")]
     watch_codes = [p.ticker for p in screening.all_picks if p.recommendation == "관망"][:3]
@@ -97,7 +97,7 @@ def generate_market_brief(
         portfolio_actions.append(item)
 
     notes = [
-        f"시장 국면: {regime.label} (투자 한도 {regime.exposure_cap*100:.0f}%)",
+        f"시장 국면: {plan.label} (주식 {plan.total_stock_pct:.0f}% / 종목당 {plan.per_position_pct:.0f}%)",
         f"{screening.universe_label} {screening.analyzed_count}개 분석, 매수 후보 {len(buy_codes)}개",
         "수급 + 기술적 지표 + ML + 시장국면을 종합한 판단입니다.",
     ]
@@ -108,9 +108,9 @@ def generate_market_brief(
         date=datetime.now().strftime("%Y-%m-%d"),
         db_latest=db_latest,
         market_mood=mood,
-        market_regime=regime.regime.value,
-        regime_label=regime.label,
-        exposure_cap=regime.exposure_cap,
+        market_regime=plan.regime,
+        regime_label=plan.label,
+        exposure_cap=plan.total_stock_pct / 100,
         buy_ideas=buy_ideas,
         watch_list=watch_list,
         portfolio_summary={

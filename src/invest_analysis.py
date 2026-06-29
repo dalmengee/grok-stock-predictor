@@ -154,7 +154,7 @@ def analyze_for_investment(
 ) -> InvestmentReport:
     """종목 투자 분석 리포트를 생성합니다."""
     from src.backtest.benchmark import fetch_index_close
-    from src.backtest.regime import detect_regime
+    from src.backtest.regime import get_allocation_plan
     from src.backtest.signals import score_at_date
 
     info = get_company_info(code)
@@ -217,26 +217,27 @@ def analyze_for_investment(
     _start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
     index_close = fetch_index_close("001", _start, _end)
     as_of = df_ext.index[-1]
-    regime = detect_regime(index_close, as_of)
-    mode_score = score_at_date(df_ext, use_flow=True, mode=regime.strategy_mode) or 0
+    plan = get_allocation_plan(index_close, as_of)
+    mode_score = score_at_date(df_ext, use_flow=True, mode=plan.strategy_mode) or 0
 
-    position_pct = round(position_pct * regime.exposure_cap, 1)
-    reasons.insert(0, f"시장 국면: {regime.label}")
+    position_pct = round(min(position_pct, plan.per_position_pct), 1)
+    reasons.insert(0, f"시장 국면: {plan.label}")
+    reasons.insert(1, f"종목당 비중 {plan.per_position_pct}% / 전체 주식 {plan.total_stock_pct}% / 현금 {plan.cash_pct}%")
 
-    if regime.strategy_mode == "cash":
+    if plan.strategy_mode == "cash":
         action, position_pct = "관망", 0.0
-        cautions.append("포트폴리오 DD 위기 — 신규 매수 중단")
-    elif mode_score < regime.entry_score:
+        cautions.append("MDD 방어 — 신규 매수 중단")
+    elif mode_score < plan.entry_score:
         if action in ("매수", "분할 매수"):
             action = "관망"
             position_pct = 0.0
-            cautions.append(f"국면별 점수 {mode_score:.0f} < 진입기준 {regime.entry_score:.0f}")
-    elif regime.regime.value == "bear":
-        cautions.append("하락장 — 소액·단기 대응만 권장")
+            cautions.append(f"국면별 점수 {mode_score:.0f} < 진입기준 {plan.entry_score:.0f}")
+    elif plan.regime == "bear":
+        cautions.append(f"하락장 — 최대 {plan.per_position_pct}% 소액·{plan.max_hold_days}일 단기만")
 
     stop_loss = min(
         current - 2 * atr,
-        current * (1 - regime.stop_loss_pct),
+        current * (1 - plan.stop_loss_pct),
         float(row["sma_20"]) * 0.97,
     )
     target_price = max(predicted_price, float(row.get("bb_upper", current * 1.05)))
@@ -283,8 +284,8 @@ def analyze_for_investment(
             "individual": _flow_sum(df_ext, "individual_net", 20),
             "program": _flow_sum(df_ext, "program_net", 20),
         },
-        market_regime=regime.regime.value,
-        regime_label=regime.label,
+        market_regime=plan.regime,
+        regime_label=plan.label,
         reasons=reasons[:8],
         cautions=cautions[:6],
     )

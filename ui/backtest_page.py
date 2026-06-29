@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.backtest.config import BacktestConfig
+from src.backtest.config import BacktestConfig, DEFAULT_DATA_END, DEFAULT_DATA_START
+from src.backtest.position_plan import REGIME_PLANS
 from src.backtest.engine import run_backtest
 from src.backtest.validation import run_walk_forward
 from ui.styles import SHARED_CSS
@@ -15,7 +16,7 @@ from ui.styles import SHARED_CSS
 st.markdown(SHARED_CSS, unsafe_allow_html=True)
 st.markdown('<p class="main-header">🔬 전략 백테스트</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="sub-header">시장 국면 전환 · 리스크 관리 · 변동성 기반 포지션 사이징</p>',
+    '<p class="sub-header">상승/하락 이중 전략 · MDD 15% 제한 · 자본금 % 포지션 사이징</p>',
     unsafe_allow_html=True,
 )
 
@@ -26,19 +27,21 @@ with st.sidebar:
     universe = st.selectbox("종목군", ["kospi_large", "kosdaq", "all"], format_func=lambda x: {
         "kospi_large": "코스피 대형주", "kosdaq": "코스닥", "all": "전체",
     }[x])
-    start = st.date_input("시작일", value=date(2024, 1, 1))
-    end = st.date_input("종료일", value=date(2025, 6, 30))
+    _ds = datetime.strptime(DEFAULT_DATA_START, "%Y-%m-%d").date()
+    _de = datetime.strptime(DEFAULT_DATA_END, "%Y-%m-%d").date()
+    start = st.date_input("시작일", value=_ds, min_value=_ds, max_value=_de)
+    end = st.date_input("종료일", value=_de, min_value=_ds, max_value=_de)
     cash = st.number_input("초기자본", 10_000_000, step=1_000_000)
     rebalance = st.slider("리밸런싱(일)", 3, 15, 5)
     crisis_dd = st.slider("위기 DD 차단 %", 8, 20, 12)
 
 with tab_adaptive:
     st.markdown("""
-    **적응형 전략**
-    - **상승장**: 모멘텀+수급, 90% 투자
-    - **횡보장**: 선별 매수, 55% 투자
-    - **하락장**: 과매도 반등만, 25% 투자
-    - **위기**: DD 12% 초과 시 현금 대기
+    **이중 전략 (최소 10년 백테스트 · MDD 15% 이내)**
+    - **상승장**: 모멘텀 추종 — 주식 60% / 종목당 15% (최대 4종목)
+    - **횡보장**: 선별 매수 — 주식 30% / 종목당 15% (최대 2종목)
+    - **하락장**: 과매도 반등 — 주식 15% / 종목당 15% (최대 1종목)
+    - **위기**: DD -12% 이상 시 전량 현금
     """)
     if st.button("백테스트 실행", type="primary"):
         with st.spinner("시뮬레이션 중..."):
@@ -47,7 +50,7 @@ with tab_adaptive:
                     start_date=str(start), end_date=str(end),
                     initial_cash=cash, adaptive=True,
                     rebalance_days=rebalance,
-                    crisis_dd_threshold=crisis_dd / 100,
+                    crisis_dd_trigger=crisis_dd / 100,
                 )
                 st.session_state["bt_result"] = run_backtest(universe=universe, config=cfg)
             except Exception as e:
@@ -60,7 +63,17 @@ with tab_adaptive:
         c1.metric("총수익률", f"{m.total_return_pct:+.1f}%")
         c2.metric("KOSPI 대비", f"{m.alpha_pct:+.1f}%p")
         c3.metric("샤프", f"{m.sharpe_ratio:.2f}")
-        c4.metric("MDD", f"{m.max_drawdown_pct:.1f}%")
+        mdd_limit = r.config.max_drawdown_limit * 100
+        mdd_ok = abs(m.max_drawdown_pct) <= mdd_limit
+        c4.metric("MDD", f"{m.max_drawdown_pct:.1f}%", delta=f"한도 {mdd_limit:.0f}%", delta_color="normal" if mdd_ok else "inverse")
+
+        plan_rows = [
+            {"국면": p.label, "주식%": p.total_stock_pct, "현금%": p.cash_pct,
+             "종목당%": p.per_position_pct, "최대종목": p.max_positions, "전략": p.strategy_mode}
+            for p in REGIME_PLANS.values()
+        ]
+        with st.expander("포지션 사이징 설계", expanded=False):
+            st.dataframe(plan_rows, hide_index=True, use_container_width=True)
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=r.equity_curve.index, y=r.equity_curve.values, name="전략", line=dict(color="#2563eb")))
@@ -74,6 +87,10 @@ with tab_adaptive:
             if not r.exposure_log.empty:
                 st.caption(f"평균 주식 비중: {r.exposure_log.mean()*100:.1f}%")
 
+        if mdd_ok:
+            st.success(f"MDD {abs(m.max_drawdown_pct):.1f}% — 15% 한도 이내")
+        else:
+            st.error(f"MDD {abs(m.max_drawdown_pct):.1f}% — 15% 한도 초과")
         if m.alpha_pct > 0:
             st.success("KOSPI 대비 초과수익")
         elif m.total_return_pct > 0:
@@ -87,7 +104,7 @@ with tab_compare:
             base = dict(start_date=str(start), end_date=str(end), initial_cash=cash, rebalance_days=rebalance)
             results = {}
             for name, adaptive in [("단순 로테이션", False), ("적응형", True)]:
-                cfg = BacktestConfig(**base, adaptive=adaptive, crisis_dd_threshold=crisis_dd / 100)
+                cfg = BacktestConfig(**base, adaptive=adaptive, crisis_dd_trigger=crisis_dd / 100)
                 results[name] = run_backtest(universe=universe, config=cfg)
             st.session_state["compare"] = results
 
@@ -109,7 +126,7 @@ with tab_validate:
                 st.session_state["wf"] = run_walk_forward(
                     universe=universe, start_date=str(start), end_date=str(end),
                     train_ratio=train_ratio,
-                    base_config=BacktestConfig(adaptive=True, crisis_dd_threshold=crisis_dd / 100),
+                    base_config=BacktestConfig(adaptive=True, crisis_dd_trigger=crisis_dd / 100),
                 )
             except Exception as e:
                 st.error(str(e))

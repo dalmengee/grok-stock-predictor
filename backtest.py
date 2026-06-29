@@ -6,7 +6,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.backtest.config import BacktestConfig
+from src.backtest.config import BacktestConfig, DEFAULT_DATA_END, DEFAULT_DATA_START
+from src.backtest.position_plan import REGIME_PLANS
 from src.backtest.engine import run_backtest
 from src.backtest.validation import run_walk_forward
 
@@ -41,11 +42,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         initial_cash=args.cash,
         adaptive=not args.simple,
         rebalance_days=args.rebalance,
-        crisis_dd_threshold=args.crisis_dd / 100,
+        crisis_dd_trigger=args.crisis_dd / 100,
     )
-    mode = "적응형 (국면전환+리스크관리)" if cfg.adaptive else "단순 로테이션"
+    mode = "이중 전략 (상승/하락 국면 + MDD 15%)" if cfg.adaptive and cfg.dual_strategy else (
+        "적응형" if cfg.adaptive else "단순 로테이션"
+    )
     print(f"\n🔬 백테스트 — {mode}")
-    print(f"   {args.universe}, {args.start} ~ {args.end}\n")
+    print(f"   {args.universe}, {args.start} ~ {args.end}")
+    if cfg.adaptive and cfg.dual_strategy:
+        print(f"   MDD 한도: {cfg.max_drawdown_limit*100:.0f}% | 위기 DD: {cfg.crisis_dd_trigger*100:.0f}%\n")
+    else:
+        print()
 
     result = run_backtest(universe=args.universe, config=cfg)
     m = result.metrics
@@ -58,11 +65,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("\n  [시장 국면 분포]")
         for regime, cnt in counts.items():
             pct = cnt / len(result.regime_log) * 100
-            print(f"    {regime}: {pct:.0f}%")
+            plan = REGIME_PLANS.get(regime)
+            sizing = f"주식 {plan.total_stock_pct:.0f}% / 종목당 {plan.per_position_pct:.0f}%" if plan else ""
+            print(f"    {regime}: {pct:.0f}%  ({sizing})")
         if not result.exposure_log.empty:
             print(f"    평균 주식비중: {result.exposure_log.mean()*100:.1f}%")
 
-    print(f"\n  판정: {_verdict(m)}")
+    mdd_ok = abs(m.max_drawdown_pct) <= cfg.max_drawdown_limit * 100
+    print(f"\n  MDD 제한: {'✅' if mdd_ok else '❌'} {abs(m.max_drawdown_pct):.1f}% / {cfg.max_drawdown_limit*100:.0f}%")
+    print(f"  판정: {_verdict(m)}")
     print("=" * 60 + "\n")
     return 0
 
@@ -115,8 +126,8 @@ def main() -> int:
     ]:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--universe", default="kospi_large", choices=["kospi_large", "kosdaq", "all"])
-        p.add_argument("--start", default="2024-01-01")
-        p.add_argument("--end", default="2025-06-30")
+        p.add_argument("--start", default=DEFAULT_DATA_START)
+        p.add_argument("--end", default=DEFAULT_DATA_END)
         p.add_argument("--cash", type=float, default=10_000_000)
         p.add_argument("--rebalance", type=int, default=5)
         if name == "run":
