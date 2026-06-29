@@ -1,0 +1,12 @@
+{
+  "cash": 10000000,
+  "holdings": [
+    {
+      "code": "005930",
+      "quantity": 10,
+      "avg_price": 320000,
+      "added_at": "2026-06-01"
+    }
+  ],
+  "updated_at": ""
+}

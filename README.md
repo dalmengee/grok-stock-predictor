@@ -10,6 +10,7 @@
 - Random Forest / Gradient Boosting 모델
 - 미국·한국 주식 지원 (`AAPL`, `005930.KS` 등)
 - **오늘의 한국 주식 스크리너** — 코스피/코스닥 종목을 분석해 매수 후보 순위 제공
+- **투자 의사결정 도구** — 종목 분석, 수급/리스크, 손절·목표가, 포트폴리오, 일일 브리핑
 - CLI 및 Streamlit 웹 UI
 
 ## 설치
@@ -44,6 +45,16 @@ python predict.py 005930 --days 10
 python predict.py TSLA --model gradient_boosting --chart chart.png
 ```
 
+### 투자 의사결정
+
+```bash
+python invest.py analyze 005930          # 종목 투자 분석 (진입/손절/목표가)
+python invest.py brief                   # 오늘의 투자 브리핑
+python invest.py portfolio show          # 포트폴리오 조회
+python invest.py portfolio add 005930 10 320000  # 종목 추가
+streamlit run invest_app.py              # 투자 대시보드
+```
+
 ### 오늘의 한국 주식 (스크리너)
 
 ```bash
@@ -65,15 +76,21 @@ streamlit run kr_app.py   # 한국 주식 스크리너
 
 ```
 ├── predict.py          # 단일 종목 예측 CLI
+├── invest.py           # 투자 의사결정 CLI
+├── invest_app.py       # 투자 대시보드 웹 앱
 ├── kr_pick.py          # 한국 주식 스크리너 CLI
 ├── app.py              # 단일 종목 예측 웹 앱
 ├── kr_app.py           # 한국 주식 스크리너 웹 앱
+├── data/               # 포트폴리오 (portfolio.json, gitignore)
 ├── requirements.txt
 └── src/
     ├── data_fetcher.py # 데이터 수집 (한국=로컬DB, 해외=Yahoo)
     ├── local_db.py     # 키움 SQLite DB 리더
     ├── features.py     # 기술적 지표
     ├── model.py        # ML 모델
+    ├── invest_analysis.py  # 투자 분석 (수급/리스크/손절)
+    ├── portfolio.py        # 포트폴리오 관리
+    ├── market_brief.py     # 일일 투자 브리핑
     ├── screener.py     # 매수 스코어링
     ├── korean_universe.py  # 한국 종목 리스트
     └── visualizer.py   # 차트 시각화

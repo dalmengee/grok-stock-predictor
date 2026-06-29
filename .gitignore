@@ -31,3 +31,6 @@ chart.*
 # Environment variables
 .env
 .env.*
+
+# User portfolio (local only)
+data/portfolio.json

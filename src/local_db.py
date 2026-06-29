@@ -73,11 +73,48 @@ def period_to_start_date(period: str, end: datetime | None = None) -> str:
     return start.strftime("%Y-%m-%d")
 
 
+_OHLCV_COLS = ["open", "high", "low", "close", "volume"]
+_FLOW_COLS = [
+    "foreigner_net",
+    "institution_net",
+    "individual_net",
+    "program_net",
+    "short_sell_qty",
+    "credit_balance_rate",
+]
+
+
+def _quote_query_columns(extended: bool) -> str:
+    base = "dt, open, high, low, close, trade_qty"
+    if not extended:
+        return base
+    extra = ", foreigner_net, institution_net, individual_net, program_net, short_sell_qty, credit_balance_rate"
+    return base + extra
+
+
+def _rows_to_quote_df(rows: list, extended: bool) -> pd.DataFrame:
+    if not rows:
+        raise ValueError("DB 데이터가 없습니다.")
+
+    if extended:
+        columns = ["dt", *_OHLCV_COLS, *_FLOW_COLS]
+    else:
+        columns = ["dt", *_OHLCV_COLS]
+
+    df = pd.DataFrame(rows, columns=columns)
+    df["dt"] = pd.to_datetime(df["dt"])
+    df = df.set_index("dt")
+    for col in columns[1:]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.dropna(subset=_OHLCV_COLS)
+
+
 def fetch_daily_quote(
     code: str,
     period: str = "2y",
     start: str | None = None,
     end: str | None = None,
+    extended: bool = False,
 ) -> pd.DataFrame:
     """단일 종목 일봉 데이터를 반환합니다."""
     normalized = normalize_korean_code(code)
@@ -92,8 +129,8 @@ def fetch_daily_quote(
     conn = _connect_readonly("daily_quote.sqlite3")
     try:
         rows = conn.execute(
-            """
-            SELECT dt, open, high, low, close, trade_qty
+            f"""
+            SELECT {_quote_query_columns(extended)}
             FROM daily_quote
             WHERE code = ? AND dt >= ? AND dt <= ?
             ORDER BY dt
@@ -106,12 +143,7 @@ def fetch_daily_quote(
     if not rows:
         raise ValueError(f"'{normalized}' 종목의 DB 데이터가 없습니다.")
 
-    df = pd.DataFrame(rows, columns=["dt", "open", "high", "low", "close", "volume"])
-    df["dt"] = pd.to_datetime(df["dt"])
-    df = df.set_index("dt")
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna()
+    return _rows_to_quote_df(rows, extended)
 
 
 def fetch_multiple_daily_quotes(
