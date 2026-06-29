@@ -85,6 +85,27 @@ def evaluate_model(
     }
 
 
+def quick_predict(
+    df: pd.DataFrame,
+    forecast_days: int = 5,
+    model_name: str = "random_forest",
+) -> tuple[float, float, float]:
+    """교차 검증 없이 빠르게 예측합니다. (스크리너용)"""
+    X, y, feature_cols = prepare_features(df, forecast_days=forecast_days)
+    if len(X) < 30:
+        raise ValueError("학습 데이터가 부족합니다.")
+
+    model = MODELS.get(model_name, MODELS["random_forest"])
+    pipeline = _build_pipeline(model)
+    pipeline.fit(X, y)
+
+    latest_features = get_latest_features(df, feature_cols)
+    predicted_price = float(pipeline.predict(latest_features)[0])
+    current_price = float(df["close"].iloc[-1])
+    predicted_return = (predicted_price / current_price) - 1
+    return current_price, predicted_price, predicted_return
+
+
 def train_and_predict(
     df: pd.DataFrame,
     ticker: str,

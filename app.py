@@ -49,7 +49,7 @@ st.markdown(
 
 with st.sidebar:
     st.header("설정")
-    ticker = st.text_input("종목 심볼", value="AAPL", help="예: AAPL, TSLA, 005930.KS")
+    ticker = st.text_input("종목 심볼", value="005930", help="예: 005930, 000660, AAPL")
     period = st.selectbox("데이터 기간", ["1y", "2y", "3y", "5y"], index=1)
     forecast_days = st.slider("예측 기간 (일)", min_value=1, max_value=30, value=5)
     model_name = st.selectbox(
@@ -62,7 +62,7 @@ with st.sidebar:
     st.divider()
     st.markdown("**종목 예시**")
     st.markdown("- 미국: `AAPL`, `TSLA`, `MSFT`")
-    st.markdown("- 한국: `005930.KS`, `000660.KS`")
+    st.markdown("- 한국: `005930`, `000660` (로컬 DB)")
 
 if predict_btn:
     with st.spinner(f"{ticker} 데이터를 불러오고 예측 중..."):

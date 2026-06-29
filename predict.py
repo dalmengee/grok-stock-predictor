@@ -24,11 +24,11 @@ def main() -> int:
         epilog="""
 예시:
   python predict.py AAPL
-  python predict.py 005930.KS --days 10
+  python predict.py 005930 --days 10
   python predict.py TSLA --model gradient_boosting --period 3y --chart output.png
         """,
     )
-    parser.add_argument("ticker", help="종목 심볼 (예: AAPL, 005930.KS, TSLA)")
+    parser.add_argument("ticker", help="종목 심볼 (예: AAPL, 005930, TSLA)")
     parser.add_argument("--days", type=int, default=5, help="예측 기간 (일, 기본: 5)")
     parser.add_argument(
         "--model",

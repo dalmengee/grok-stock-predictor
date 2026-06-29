@@ -4,10 +4,12 @@
 
 ## 기능
 
-- Yahoo Finance에서 OHLCV 데이터 자동 수집
+- **한국 주식**: 키움 로컬 DB (`daily_quote.sqlite3`, `master.sqlite3`)에서 일봉 수집
+- **해외 주식**: Yahoo Finance에서 OHLCV 데이터 수집
 - RSI, MACD, 볼린저밴드 등 14개 기술적 지표
 - Random Forest / Gradient Boosting 모델
 - 미국·한국 주식 지원 (`AAPL`, `005930.KS` 등)
+- **오늘의 한국 주식 스크리너** — 코스피/코스닥 종목을 분석해 매수 후보 순위 제공
 - CLI 및 Streamlit 웹 UI
 
 ## 설치
@@ -18,32 +20,62 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+한국 주식 데이터는 기본적으로 아래 경로의 DB를 **읽기 전용**으로 사용합니다 (DB 파일 수정 없음):
+
+```
+/Users/dalmengee/claude_kiwoom_20260521/data/db/
+  ├── daily_quote.sqlite3   # 일봉
+  └── master.sqlite3        # 종목 마스터
+```
+
+다른 경로를 쓰려면 환경변수를 설정하세요:
+
+```bash
+export KIWOOM_DB_DIR=/path/to/data/db
+```
+
 ## 사용법
 
 ### CLI
 
 ```bash
 python predict.py AAPL
-python predict.py 005930.KS --days 10
+python predict.py 005930 --days 10
 python predict.py TSLA --model gradient_boosting --chart chart.png
 ```
+
+### 오늘의 한국 주식 (스크리너)
+
+```bash
+python kr_pick.py
+python kr_pick.py --universe all --top 10
+streamlit run kr_app.py
+```
+
+점수 기준 (100점): ML 예측 30 + 추세 25 + 모멘텀 20 + 거래량 15 + 단기 강도 10
 
 ### 웹 UI
 
 ```bash
-streamlit run app.py
+streamlit run app.py      # 단일 종목 예측
+streamlit run kr_app.py   # 한국 주식 스크리너
 ```
 
 ## 프로젝트 구조
 
 ```
-├── predict.py          # CLI 진입점
-├── app.py              # Streamlit 웹 앱
+├── predict.py          # 단일 종목 예측 CLI
+├── kr_pick.py          # 한국 주식 스크리너 CLI
+├── app.py              # 단일 종목 예측 웹 앱
+├── kr_app.py           # 한국 주식 스크리너 웹 앱
 ├── requirements.txt
 └── src/
-    ├── data_fetcher.py # 데이터 수집
+    ├── data_fetcher.py # 데이터 수집 (한국=로컬DB, 해외=Yahoo)
+    ├── local_db.py     # 키움 SQLite DB 리더
     ├── features.py     # 기술적 지표
     ├── model.py        # ML 모델
+    ├── screener.py     # 매수 스코어링
+    ├── korean_universe.py  # 한국 종목 리스트
     └── visualizer.py   # 차트 시각화
 ```
 
