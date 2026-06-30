@@ -7,6 +7,7 @@ import argparse
 import sys
 
 from src.backtest.config import BacktestConfig, DEFAULT_DATA_END, DEFAULT_DATA_START
+from src.backtest.kospi200 import BENCHMARK_LABEL
 from src.backtest.position_plan import REGIME_PLANS
 from src.backtest.engine import run_backtest
 from src.backtest.validation import run_walk_forward
@@ -16,7 +17,7 @@ def _print_metrics(label: str, m) -> None:
     print(f"\n  [{label}]")
     print(f"    총수익률:   {m.total_return_pct:+.2f}%")
     print(f"    CAGR:       {m.cagr_pct:+.2f}%")
-    print(f"    KOSPI 대비: {m.alpha_pct:+.2f}%p (벤치마크 {m.benchmark_return_pct:+.2f}%)")
+    print(f"    벤치 대비:  {m.alpha_pct:+.2f}%p (벤치마크 {m.benchmark_return_pct:+.2f}%)")
     print(f"    샤프비율:   {m.sharpe_ratio:.2f}")
     print(f"    최대낙폭:   {m.max_drawdown_pct:.2f}%")
     print(f"    승률:       {m.win_rate_pct:.1f}%")
@@ -27,7 +28,7 @@ def _print_metrics(label: str, m) -> None:
 
 def _verdict(m) -> str:
     if m.alpha_pct > 0 and m.sharpe_ratio > 0.3:
-        return "✅ KOSPI 대비 초과수익"
+        return f"✅ {BENCHMARK_LABEL} 초과수익"
     if m.total_return_pct > m.benchmark_return_pct:
         return "✅ 벤치마크 수익률 상회"
     if m.total_return_pct > 0:
@@ -44,11 +45,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         rebalance_days=args.rebalance,
         crisis_dd_trigger=args.crisis_dd / 100,
     )
-    mode = "이중 전략 (상승/하락 국면 + MDD 15%)" if cfg.adaptive and cfg.dual_strategy else (
+    mode = "KOSPI200 이중전략 (삼성·SK하이닉스 제외)" if cfg.adaptive and cfg.dual_strategy else (
         "적응형" if cfg.adaptive else "단순 로테이션"
     )
     print(f"\n🔬 백테스트 — {mode}")
     print(f"   {args.universe}, {args.start} ~ {args.end}")
+    print(f"   벤치마크: {BENCHMARK_LABEL}")
     if cfg.adaptive and cfg.dual_strategy:
         print(f"   MDD 한도: {cfg.max_drawdown_limit*100:.0f}% | 위기 DD: {cfg.crisis_dd_trigger*100:.0f}%\n")
     else:
@@ -125,7 +127,10 @@ def main() -> int:
         ("validate", "워크포워드 검증"),
     ]:
         p = sub.add_parser(name, help=help_text)
-        p.add_argument("--universe", default="kospi_large", choices=["kospi_large", "kosdaq", "all"])
+        p.add_argument(
+            "--universe", default="kospi200_ex",
+            choices=["kospi200_ex", "kospi200", "kospi_large", "kosdaq", "all"],
+        )
         p.add_argument("--start", default=DEFAULT_DATA_START)
         p.add_argument("--end", default=DEFAULT_DATA_END)
         p.add_argument("--cash", type=float, default=10_000_000)

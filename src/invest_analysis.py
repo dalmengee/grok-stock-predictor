@@ -153,7 +153,7 @@ def analyze_for_investment(
     portfolio_value: float = 10_000_000,
 ) -> InvestmentReport:
     """종목 투자 분석 리포트를 생성합니다."""
-    from src.backtest.benchmark import fetch_index_close
+    from src.backtest.kospi200 import build_kospi200_equal_weight_benchmark
     from src.backtest.regime import get_allocation_plan
     from src.backtest.signals import score_at_date
 
@@ -215,7 +215,7 @@ def analyze_for_investment(
     from datetime import datetime, timedelta
     _end = datetime.now().strftime("%Y-%m-%d")
     _start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
-    index_close = fetch_index_close("001", _start, _end)
+    index_close = build_kospi200_equal_weight_benchmark(_start, _end)
     as_of = df_ext.index[-1]
     plan = get_allocation_plan(index_close, as_of)
     mode_score = score_at_date(df_ext, use_flow=True, mode=plan.strategy_mode) or 0

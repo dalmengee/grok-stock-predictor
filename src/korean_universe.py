@@ -61,8 +61,12 @@ UNIVERSES = {
 
 def get_universe(name: str = "kospi_large") -> tuple[str, list[KoreanStock]]:
     """종목 유니버스를 반환합니다."""
+    if name in ("kospi200", "kospi200_ex"):
+        from src.backtest.kospi200 import get_kospi200_universe
+
+        return get_kospi200_universe(exclude_strategy=(name == "kospi200_ex"))
     if name not in UNIVERSES:
-        available = ", ".join(UNIVERSES)
+        available = ", ".join([*UNIVERSES, "kospi200", "kospi200_ex"])
         raise ValueError(f"알 수 없는 유니버스: {name}. 사용 가능: {available}")
     label, stocks = UNIVERSES[name]
     return label, stocks

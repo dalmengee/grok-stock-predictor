@@ -17,12 +17,19 @@ class BacktestConfig:
     start_date: str = DEFAULT_DATA_START
     end_date: str = DEFAULT_DATA_END
     initial_cash: float = 10_000_000
-    rebalance_days: int = 5
+    rebalance_days: int = 21
     commission_rate: float = 0.00015
     sell_tax_rate: float = 0.0023
     slippage_pct: float = 0.001
     min_history_days: int = 120
     use_flow_score: bool = True
+
+    universe: str = "kospi200_ex"
+    benchmark_type: str = "kospi200_ew"
+    exclude_codes: tuple[str, ...] = ("005930", "000660")
+    rebalance_universe_days: int = 63
+    rebalance_only_exits: bool = True
+    global_mdd_limit: bool = False
 
     adaptive: bool = True
     dual_strategy: bool = True

@@ -67,6 +67,15 @@ def detect_market_regime(index_close: pd.Series, as_of: pd.Timestamp) -> MarketR
     return MarketRegime.NEUTRAL
 
 
+def _index_drawdown(index_close: pd.Series, as_of: pd.Timestamp, lookback: int = 120) -> float:
+    hist = index_close[index_close.index <= as_of].tail(lookback)
+    if len(hist) < 20:
+        return 0.0
+    peak = float(hist.max())
+    last = float(hist.iloc[-1])
+    return (last - peak) / peak if peak > 0 else 0.0
+
+
 def get_allocation_plan(
     index_close: pd.Series,
     as_of: pd.Timestamp,
@@ -74,12 +83,13 @@ def get_allocation_plan(
     max_dd_limit: float = 0.15,
 ) -> CapitalAllocation:
     """시장 국면 + DD 스케일링을 반영한 자본 배분 계획."""
-    if portfolio_drawdown <= -max_dd_limit + 0.03:
+    if portfolio_drawdown <= -max_dd_limit:
         return CASH_PLAN
 
     regime = detect_market_regime(index_close, as_of)
-    if portfolio_drawdown <= -(max_dd_limit - 0.03):
-        return CASH_PLAN
+    idx_dd = _index_drawdown(index_close, as_of)
+    if idx_dd <= -0.15 and regime == MarketRegime.BEAR:
+        return REGIME_PLANS["bear"]
 
     base = REGIME_PLANS[regime.value]
     return apply_drawdown_scaling(base, portfolio_drawdown)

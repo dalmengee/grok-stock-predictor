@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.backtest.config import BacktestConfig, DEFAULT_DATA_END, DEFAULT_DATA_START
+from src.backtest.kospi200 import BENCHMARK_LABEL
 from src.backtest.position_plan import REGIME_PLANS
 from src.backtest.engine import run_backtest
 from src.backtest.validation import run_walk_forward
@@ -24,9 +25,11 @@ tab_adaptive, tab_compare, tab_validate = st.tabs(["적응형 전략", "전략 �
 
 with st.sidebar:
     st.header("설정")
-    universe = st.selectbox("종목군", ["kospi_large", "kosdaq", "all"], format_func=lambda x: {
+    universe = st.selectbox("종목군", ["kospi200_ex", "kospi200", "kospi_large", "kosdaq", "all"], format_func=lambda x: {
+        "kospi200_ex": "KOSPI200 (삼성·SK하이닉스 제외)",
+        "kospi200": "KOSPI200 전체",
         "kospi_large": "코스피 대형주", "kosdaq": "코스닥", "all": "전체",
-    }[x])
+    }[x], index=0)
     _ds = datetime.strptime(DEFAULT_DATA_START, "%Y-%m-%d").date()
     _de = datetime.strptime(DEFAULT_DATA_END, "%Y-%m-%d").date()
     start = st.date_input("시작일", value=_ds, min_value=_ds, max_value=_de)
@@ -37,12 +40,12 @@ with st.sidebar:
 
 with tab_adaptive:
     st.markdown("""
-    **이중 전략 (최소 10년 백테스트 · MDD 15% 이내)**
-    - **상승장**: 모멘텀 추종 — 주식 60% / 종목당 15% (최대 4종목)
-    - **횡보장**: 선별 매수 — 주식 30% / 종목당 15% (최대 2종목)
-    - **하락장**: 과매도 반등 — 주식 15% / 종목당 15% (최대 1종목)
-    - **위기**: DD -12% 이상 시 전량 현금
-    """)
+    **KOSPI200 이중전략** (삼성·SK하이닉스 제외 · 벤치: {benchmark})
+    - **상승장**: 모멘텀 동일비중 — 주식 80% / 20종목 × 4%
+    - **횡보장**: 선별 — 주식 55% / 10종목 × 5.5%
+    - **하락장**: 현금 대기
+    - **위기**: DD -13% 이상 시 전량 현금 · MDD 15% 목표
+    """.format(benchmark=BENCHMARK_LABEL))
     if st.button("백테스트 실행", type="primary"):
         with st.spinner("시뮬레이션 중..."):
             try:
@@ -61,7 +64,7 @@ with tab_adaptive:
         m = r.metrics
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("총수익률", f"{m.total_return_pct:+.1f}%")
-        c2.metric("KOSPI 대비", f"{m.alpha_pct:+.1f}%p")
+        c2.metric("벤치 대비", f"{m.alpha_pct:+.1f}%p")
         c3.metric("샤프", f"{m.sharpe_ratio:.2f}")
         mdd_limit = r.config.max_drawdown_limit * 100
         mdd_ok = abs(m.max_drawdown_pct) <= mdd_limit
@@ -77,7 +80,7 @@ with tab_adaptive:
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=r.equity_curve.index, y=r.equity_curve.values, name="전략", line=dict(color="#2563eb")))
-        fig.add_trace(go.Scatter(x=r.benchmark_curve.index, y=r.benchmark_curve.values, name="KOSPI", line=dict(dash="dash", color="#94a3b8")))
+        fig.add_trace(go.Scatter(x=r.benchmark_curve.index, y=r.benchmark_curve.values, name=BENCHMARK_LABEL, line=dict(dash="dash", color="#94a3b8")))
         fig.update_layout(height=380, template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
 
@@ -92,7 +95,7 @@ with tab_adaptive:
         else:
             st.error(f"MDD {abs(m.max_drawdown_pct):.1f}% — 15% 한도 초과")
         if m.alpha_pct > 0:
-            st.success("KOSPI 대비 초과수익")
+            st.success(f"{BENCHMARK_LABEL} 초과수익")
         elif m.total_return_pct > 0:
             st.warning("수익은 있으나 벤치마크 열세")
         else:

@@ -44,7 +44,7 @@ def generate_market_brief(
     top_ideas: int = 5,
 ) -> MarketBrief:
     """오늘의 투자 브리핑을 생성합니다."""
-    from src.backtest.benchmark import fetch_index_close
+    from src.backtest.kospi200 import build_kospi200_equal_weight_benchmark
     from src.backtest.regime import get_allocation_plan
 
     screening = screen_korean_stocks(universe=universe, top_n=top_ideas)
@@ -53,7 +53,7 @@ def generate_market_brief(
     from datetime import datetime, timedelta
     _end = datetime.now().strftime("%Y-%m-%d")
     _start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
-    index_close = fetch_index_close("001", _start, _end)
+    index_close = build_kospi200_equal_weight_benchmark(_start, _end)
     if not index_close.empty:
         plan = get_allocation_plan(index_close, index_close.index[-1])
     else:

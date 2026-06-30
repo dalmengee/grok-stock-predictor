@@ -8,6 +8,11 @@ import pandas as pd
 
 from src.backtest.benchmark import benchmark_equity_curve, fetch_index_close
 from src.backtest.config import BacktestConfig, validate_period
+from src.backtest.kospi200 import (
+    BENCHMARK_LABEL,
+    build_kospi200_equal_weight_benchmark,
+    select_kospi200_codes,
+)
 from src.backtest.metrics import PerformanceMetrics, compute_metrics
 from src.backtest.position_plan import CASH_PLAN, allocate_by_plan
 from src.backtest.regime import get_allocation_plan
@@ -75,11 +80,40 @@ def _portfolio_value(cash, positions, data_map, dt) -> float:
     return cash + stock_val
 
 
+def _is_kospi200_universe(universe: str) -> bool:
+    return universe in ("kospi200", "kospi200_ex")
+
+
 def _load_universe_data(universe: str, start: str, end: str) -> dict[str, pd.DataFrame]:
-    _, stocks = get_universe(universe)
-    codes = [s.ticker for s in stocks]
+    if _is_kospi200_universe(universe):
+        from src.backtest.kospi200 import _static_kospi200_codes
+
+        codes = _static_kospi200_codes(exclude_strategy=False)
+    else:
+        _, stocks = get_universe(universe)
+        codes = [s.ticker for s in stocks]
     warmup = (pd.Timestamp(start) - pd.Timedelta(days=250)).strftime("%Y-%m-%d")
     return fetch_multiple_daily_quotes(codes, start=warmup, end=end, extended=True)
+
+
+def _strategy_codes(universe: str, dt: pd.Timestamp, data_map: dict, cfg: BacktestConfig) -> set[str]:
+    if _is_kospi200_universe(universe):
+        return set(select_kospi200_codes(dt, data_map, for_strategy=True))
+    _, stocks = get_universe(universe)
+    return {s.ticker for s in stocks}
+
+
+def _resolve_benchmark_series(
+    cfg: BacktestConfig,
+    data_map: dict,
+    equity_index: pd.DatetimeIndex,
+    warmup_start: str,
+) -> pd.Series:
+    if cfg.benchmark_type == "kospi200_ew":
+        return build_kospi200_equal_weight_benchmark(
+            warmup_start, cfg.end_date, data_map=data_map,
+        )
+    return fetch_index_close("001", warmup_start, cfg.end_date)
 
 
 def _liquidate_all(positions, data_map, dt, cfg, reason) -> tuple[float, list]:
@@ -100,6 +134,7 @@ def _run_dual_strategy(
     data_map: dict,
     trading_dates: list,
     index_close: pd.Series,
+    universe: str = "kospi200_ex",
 ) -> BacktestResult:
     cash = cfg.initial_cash
     positions: dict[str, Position] = {}
@@ -109,11 +144,36 @@ def _run_dual_strategy(
     exposure_rows: list[tuple[pd.Timestamp, float]] = []
     alloc_rows: list[dict] = []
     last_rebalance = None
+    last_universe_refresh = None
+    strategy_pool: set[str] = _strategy_codes(universe, trading_dates[0], data_map, cfg)
     risk_mgr = RiskManager(cfg.initial_cash, cfg.crisis_dd_trigger, cfg.recovery_dd_threshold)
 
     for dt in trading_dates:
+        if (
+            last_universe_refresh is None
+            or (dt - last_universe_refresh).days >= cfg.rebalance_universe_days
+        ):
+            strategy_pool = _strategy_codes(universe, dt, data_map, cfg)
+            last_universe_refresh = dt
         equity = _portfolio_value(cash, positions, data_map, dt)
-        risk = risk_mgr.update(equity)
+        risk = risk_mgr.update(equity, dt)
+        global_dd = risk_mgr.global_drawdown(equity)
+        if cfg.global_mdd_limit and global_dd <= -cfg.max_drawdown_limit and positions:
+            gain, ts = _liquidate_all(positions, data_map, dt, cfg, "global_mdd_stop")
+            cash += gain
+            trades.extend(ts)
+            risk_mgr.reset_peak(cash)
+            risk_mgr.trigger_cash_lock(dt)
+            equity = cash
+            risk = risk_mgr.update(equity, dt)
+        elif risk.current_drawdown <= -cfg.max_drawdown_limit and positions:
+            gain, ts = _liquidate_all(positions, data_map, dt, cfg, "mdd_hard_stop")
+            cash += gain
+            trades.extend(ts)
+            risk_mgr.reset_peak(cash)
+            equity = cash
+            risk = risk_mgr.update(equity)
+
         plan = get_allocation_plan(index_close, dt, risk.current_drawdown, cfg.max_drawdown_limit)
 
         regime_rows.append({
@@ -127,48 +187,61 @@ def _run_dual_strategy(
             gain, ts = _liquidate_all(positions, data_map, dt, cfg, "mdd_defense")
             cash += gain
             trades.extend(ts)
+            risk_mgr.reset_peak(cash)
 
-        for code, pos in list(positions.items()):
-            df = data_map.get(code)
-            if df is None or dt not in df.index:
-                continue
-            price = float(df.loc[dt, "close"])
-            pos.high_watermark = max(pos.high_watermark, price)
-            ret = price / pos.entry_price - 1
-            hold_days = (dt - pos.entry_date).days
-            hist = df[df.index <= dt]
-            sc = score_at_date(hist, cfg.use_flow_score, plan.strategy_mode) or 0
+        if not cfg.rebalance_only_exits:
+            for code, pos in list(positions.items()):
+                df = data_map.get(code)
+                if df is None or dt not in df.index:
+                    continue
+                price = float(df.loc[dt, "close"])
+                pos.high_watermark = max(pos.high_watermark, price)
+                ret = price / pos.entry_price - 1
+                hold_days = (dt - pos.entry_date).days
+                hist = df[df.index <= dt]
+                sc = score_at_date(hist, cfg.use_flow_score, plan.strategy_mode) or 0
 
-            reason = None
-            if ret <= -plan.stop_loss_pct:
-                reason = "stop_loss"
-            elif ret >= plan.take_profit_pct:
-                reason = "take_profit"
-            elif should_trailing_stop(price, pos.high_watermark, plan.trailing_stop_pct) and ret > 0:
-                reason = "trailing_stop"
-            elif hold_days >= plan.max_hold_days:
-                reason = "max_hold"
-            elif sc < plan.entry_score - 20:
-                reason = "score_exit"
-            elif plan.strategy_mode == "cash":
-                reason = "regime_cash"
+                reason = None
+                if ret <= -plan.stop_loss_pct:
+                    reason = "stop_loss"
+                elif ret >= plan.take_profit_pct:
+                    reason = "take_profit"
+                elif should_trailing_stop(price, pos.high_watermark, plan.trailing_stop_pct) and ret > 0:
+                    reason = "trailing_stop"
+                elif hold_days >= plan.max_hold_days:
+                    reason = "max_hold"
+                elif sc < plan.entry_score - 20:
+                    reason = "score_exit"
+                elif plan.strategy_mode == "cash":
+                    reason = "regime_cash"
 
-            if reason:
-                proceeds, trade = _sell_position(code, pos, dt, price, cfg, reason)
-                del positions[code]
-                cash += proceeds
-                trades.append(trade)
+                if reason:
+                    proceeds, trade = _sell_position(code, pos, dt, price, cfg, reason)
+                    del positions[code]
+                    cash += proceeds
+                    trades.append(trade)
+        elif plan.strategy_mode == "cash" and positions:
+            gain, ts = _liquidate_all(positions, data_map, dt, cfg, "regime_cash")
+            cash += gain
+            trades.extend(ts)
 
         equity = _portfolio_value(cash, positions, data_map, dt)
         stock_val = equity - cash
         exposure_rows.append((dt, stock_val / equity if equity > 0 else 0))
 
         do_rebalance = last_rebalance is None or (dt - last_rebalance).days >= cfg.rebalance_days
+        if risk_mgr.locked_in_cash(dt):
+            plan = CASH_PLAN
         if do_rebalance and plan.strategy_mode != "cash":
             last_rebalance = dt
+            tradeable = {c: data_map[c] for c in strategy_pool if c in data_map}
+            from src.backtest.kospi200 import market_cap_at_date, _company_meta
+            meta = _company_meta()
+            caps = {c: market_cap_at_date(c, dt, data_map, meta) for c in tradeable}
             rankings = rank_universe(
-                data_map, dt, cfg.use_flow_score, cfg.min_history_days,
+                tradeable, dt, cfg.use_flow_score, cfg.min_history_days,
                 mode=plan.strategy_mode, min_score=plan.entry_score,
+                market_caps=caps,
             )
             candidates = rankings[: plan.max_positions]
             target_codes = {c for c, _ in candidates}
@@ -212,10 +285,10 @@ def _run_dual_strategy(
 
         equity_records.append((dt, _portfolio_value(cash, positions, data_map, dt)))
 
-    return _finalize(cfg, equity_records, trades, index_close, regime_rows, exposure_rows, alloc_rows)
+    return _finalize(cfg, equity_records, trades, index_close, regime_rows, exposure_rows, alloc_rows, data_map)
 
 
-def _run_simple(cfg, data_map, trading_dates, index_close) -> BacktestResult:
+def _run_simple(cfg, data_map, trading_dates, index_close, universe: str = "kospi200_ex") -> BacktestResult:
     """레거시 단순 로테이션."""
     cash = cfg.initial_cash
     positions: dict[str, Position] = {}
@@ -248,7 +321,9 @@ def _run_simple(cfg, data_map, trading_dates, index_close) -> BacktestResult:
 
         if last_rebalance is None or (dt - last_rebalance).days >= cfg.rebalance_days:
             last_rebalance = dt
-            rankings = rank_universe(data_map, dt, cfg.use_flow_score, cfg.min_history_days)
+            pool = _strategy_codes(universe, dt, data_map, cfg)
+            tradeable = {c: data_map[c] for c in pool if c in data_map}
+            rankings = rank_universe(tradeable, dt, cfg.use_flow_score, cfg.min_history_days)
             candidates = [(c, s) for c, s in rankings if s >= cfg.entry_score]
             targets = {c for c, _ in candidates[: cfg.max_positions]}
             for code in list(positions):
@@ -274,12 +349,19 @@ def _run_simple(cfg, data_map, trading_dates, index_close) -> BacktestResult:
                 slots -= 1
         equity_records.append((dt, _portfolio_value(cash, positions, data_map, dt)))
 
-    return _finalize(cfg, equity_records, trades, index_close, [], [], [])
+    return _finalize(cfg, equity_records, trades, index_close, [], [], [], data_map)
 
 
-def _finalize(cfg, equity_records, trades, index_close, regime_rows, exposure_rows, alloc_rows):
+def _finalize(cfg, equity_records, trades, index_close, regime_rows, exposure_rows, alloc_rows, data_map=None):
     equity_curve = pd.Series([v for _, v in equity_records], index=pd.DatetimeIndex([d for d, _ in equity_records]))
-    index_series = fetch_index_close("001", cfg.start_date, cfg.end_date)
+    if cfg.benchmark_type == "kospi200_ew" and data_map is not None:
+        index_series = build_kospi200_equal_weight_benchmark(
+            cfg.start_date, cfg.end_date, data_map=data_map,
+        )
+    elif index_close is not None and not index_close.empty:
+        index_series = index_close.loc[index_close.index >= cfg.start_date]
+    else:
+        index_series = fetch_index_close("001", cfg.start_date, cfg.end_date)
     bench_curve = benchmark_equity_curve(cfg.initial_cash, index_series, equity_curve.index)
     metrics = compute_metrics(equity_curve, trades, index_series, cfg.initial_cash)
     regime_df = pd.DataFrame(regime_rows).set_index("date") if regime_rows else pd.DataFrame()
@@ -288,8 +370,13 @@ def _finalize(cfg, equity_records, trades, index_close, regime_rows, exposure_ro
     return BacktestResult(cfg, metrics, equity_curve, bench_curve, trades, regime_df, exposure_series, alloc_df)
 
 
-def run_backtest(universe: str = "kospi_large", config: BacktestConfig | None = None, benchmark_code: str = "001") -> BacktestResult:
+def run_backtest(
+    universe: str | None = None,
+    config: BacktestConfig | None = None,
+    benchmark_code: str = "001",
+) -> BacktestResult:
     cfg = config or BacktestConfig()
+    universe = universe or cfg.universe
     validate_period(cfg.start_date, cfg.end_date)
     data_map = _load_universe_data(universe, cfg.start_date, cfg.end_date)
 
@@ -302,10 +389,13 @@ def run_backtest(universe: str = "kospi_large", config: BacktestConfig | None = 
         raise ValueError("백테스트 기간에 거래일이 없습니다.")
 
     warmup = (pd.Timestamp(cfg.start_date) - pd.Timedelta(days=300)).strftime("%Y-%m-%d")
-    index_close = fetch_index_close(benchmark_code, warmup, cfg.end_date)
+    if cfg.benchmark_type == "kospi200_ew":
+        index_close = _resolve_benchmark_series(cfg, data_map, pd.DatetimeIndex(trading_dates), warmup)
+    else:
+        index_close = fetch_index_close(benchmark_code, warmup, cfg.end_date)
 
     if cfg.adaptive and cfg.dual_strategy:
-        return _run_dual_strategy(cfg, data_map, trading_dates, index_close)
+        return _run_dual_strategy(cfg, data_map, trading_dates, index_close, universe)
     if cfg.adaptive:
-        return _run_dual_strategy(cfg, data_map, trading_dates, index_close)
-    return _run_simple(cfg, data_map, trading_dates, index_close)
+        return _run_dual_strategy(cfg, data_map, trading_dates, index_close, universe)
+    return _run_simple(cfg, data_map, trading_dates, index_close, universe)
